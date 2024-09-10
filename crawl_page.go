@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -18,7 +17,11 @@ type config struct {
 }
 
 func (cfg *config) crawlPage(rawCurrentURL string) {
-	defer cfg.wg.Done()
+	cfg.concurrencyControl <- struct{}{}
+	defer func() {
+		<-cfg.concurrencyControl
+		cfg.wg.Done()
+	}()
 
 	// normalize currentURL
 	currentURL, err := normalizeURL(rawCurrentURL)
@@ -28,9 +31,9 @@ func (cfg *config) crawlPage(rawCurrentURL string) {
 	}
 
 	// check is current URL contains Base URL, does not add to apge if false
-	// if !strings.Contains(currentURL, cfg.baseURL.Host) {
-	// 	return
-	// }
+	if !strings.Contains(currentURL, cfg.baseURL.Host) {
+		return
+	}
 
 	// base case: return if page has been visited
 	isFirst := cfg.addPageVisit(currentURL)
@@ -58,39 +61,22 @@ func (cfg *config) crawlPage(rawCurrentURL string) {
 
 	// add new URLs into pages map and crawl through them
 	for _, URL := range URLs {
-		normUrl, err := normalizeURL(URL)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// check is URL contains Base URL, does not add to pages map if false
-		if !strings.Contains(normUrl, cfg.baseURL.Host) {
-			continue
-		}
 
-		cfg.mu.Lock()
-		_, ok := cfg.pages[normUrl]
-		cfg.mu.Unlock()
+		cfg.wg.Add(1)
+		go cfg.crawlPage("https://" + URL)
 
-		if !ok {
-			cfg.mu.Lock()
-			cfg.pages[normUrl] = 0
-			cfg.mu.Unlock()
-
-			cfg.wg.Add(1)
-			cfg.concurrencyControl <- struct{}{}
-			go cfg.crawlPage("https://" + URL)
-			<-cfg.concurrencyControl
-		}
 	}
 }
 
 func (cfg *config) addPageVisit(normalizedURL string) (isFirst bool) {
 	cfg.mu.Lock()
-	cfg.pages[normalizedURL] += 1
-	if cfg.pages[normalizedURL] == 1 {
-		cfg.mu.Unlock()
-		return true
+	defer cfg.mu.Unlock()
+
+	if _, visited := cfg.pages[normalizedURL]; visited {
+		cfg.pages[normalizedURL]++
+		return false
 	}
-	cfg.mu.Unlock()
-	return false
+
+	cfg.pages[normalizedURL] = 1
+	return true
 }

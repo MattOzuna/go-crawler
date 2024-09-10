@@ -28,7 +28,6 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		cfg.pages[baseURL.Host] = 0
 		cfg.baseURL = baseURL
 
 		if len(args) == 2 {
@@ -56,9 +55,7 @@ func main() {
 		cfg.wg = &sync.WaitGroup{}
 
 		cfg.wg.Add(1)
-		cfg.concurrencyControl <- struct{}{}
 		go cfg.crawlPage(args[0])
-		<-cfg.concurrencyControl
 		cfg.wg.Wait()
 		printReport(cfg.pages, args[0])
 	}
