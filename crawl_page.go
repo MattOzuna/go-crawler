@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 )
@@ -15,6 +14,7 @@ type config struct {
 	mu                 *sync.Mutex
 	concurrencyControl chan struct{}
 	wg                 *sync.WaitGroup
+	maxPages           int
 }
 
 func (cfg *config) crawlPage(rawCurrentURL string) {
@@ -23,30 +23,37 @@ func (cfg *config) crawlPage(rawCurrentURL string) {
 	// normalize currentURL
 	currentURL, err := normalizeURL(rawCurrentURL)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		fmt.Printf("error after normalization, %v\n", err)
+		return
 	}
 
-	// check is current URL contains Base URL, and return early if it does not
-	if !strings.Contains(currentURL, cfg.baseURL.Host) {
+	// check is current URL contains Base URL, does not add to apge if false
+	// if !strings.Contains(currentURL, cfg.baseURL.Host) {
+	// 	return
+	// }
+
+	// base case: return if page has been visited
+	isFirst := cfg.addPageVisit(currentURL)
+	if !isFirst {
+		return
+	}
+
+	// return if max pages visited is reached
+	cfg.mu.Lock()
+	currPageLen := len(cfg.pages)
+	cfg.mu.Unlock()
+	if currPageLen > cfg.maxPages {
 		return
 	}
 
 	// get the HTML from currentURL and grab the URLs in <a> tags
 	html, err := getHTML(rawCurrentURL)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		fmt.Println(err)
 	}
 	URLs, err := getURLsFromHTML(html, cfg.baseURL.Host)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
-	}
-
-	// base case
-	if !cfg.addPageVisit(currentURL) {
-		return
+		fmt.Println(err)
 	}
 
 	// add new URLs into pages map and crawl through them
@@ -54,6 +61,10 @@ func (cfg *config) crawlPage(rawCurrentURL string) {
 		normUrl, err := normalizeURL(URL)
 		if err != nil {
 			log.Fatal(err)
+		}
+		// check is URL contains Base URL, does not add to pages map if false
+		if !strings.Contains(normUrl, cfg.baseURL.Host) {
+			continue
 		}
 
 		cfg.mu.Lock()
@@ -69,21 +80,17 @@ func (cfg *config) crawlPage(rawCurrentURL string) {
 			cfg.concurrencyControl <- struct{}{}
 			go cfg.crawlPage("https://" + URL)
 			<-cfg.concurrencyControl
-
 		}
 	}
 }
 
 func (cfg *config) addPageVisit(normalizedURL string) (isFirst bool) {
 	cfg.mu.Lock()
+	cfg.pages[normalizedURL] += 1
 	if cfg.pages[normalizedURL] == 1 {
 		cfg.mu.Unlock()
-		return false
+		return true
 	}
-
-	// mark that we have visited the current page in pages map
-	fmt.Printf("Visited %s\n", normalizedURL)
-	cfg.pages[normalizedURL] = 1
 	cfg.mu.Unlock()
-	return true
+	return false
 }

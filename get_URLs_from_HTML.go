@@ -33,8 +33,11 @@ func getURLsFromHTML(htmlBody, rawBaseURL string) ([]string, error) {
 	f(body)
 
 	for i, url := range parsedURLs {
+		if !strings.HasPrefix(url, "/") {
+			url = "/" + url
+		}
 		if !strings.Contains(url, "http") {
-			parsedURLs[i] = rawBaseURL + parsedURLs[i]
+			parsedURLs[i] = rawBaseURL + url
 		}
 	}
 
