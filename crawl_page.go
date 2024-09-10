@@ -3,29 +3,32 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
-func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
+type config struct {
+	pages              map[string]int
+	baseURL            *url.URL
+	mu                 *sync.Mutex
+	concurrencyControl chan struct{}
+	wg                 *sync.WaitGroup
+}
+
+func (cfg *config) crawlPage(rawCurrentURL string) {
+	defer cfg.wg.Done()
+
 	// normalize currentURL
 	currentURL, err := normalizeURL(rawCurrentURL)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)
 	}
-	// normalize baseURL
-	baseURL, err := normalizeURL(rawBaseURL)
-	if err != nil {
-		fmt.Println(err)
-	}
-	// check is current URL contains Base URL, and exits early if it does not
-	if !strings.Contains(currentURL, baseURL) {
-		return
-	}
 
-	// base case
-	if pages[currentURL] == 1 {
+	// check is current URL contains Base URL, and return early if it does not
+	if !strings.Contains(currentURL, cfg.baseURL.Host) {
 		return
 	}
 
@@ -35,28 +38,52 @@ func crawlPage(rawBaseURL, rawCurrentURL string, pages map[string]int) {
 		log.Fatal(err)
 		os.Exit(1)
 	}
-
-	URLs, err := getURLsFromHTML(html, rawBaseURL)
+	URLs, err := getURLsFromHTML(html, cfg.baseURL.Host)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)
 	}
 
-	// mark that we have visited the current page in pages map
-	// fmt.Printf("Visited %s\n", rawCurrentURL)
-	pages[currentURL] = 1
+	// base case
+	if !cfg.addPageVisit(currentURL) {
+		return
+	}
 
 	// add new URLs into pages map and crawl through them
-	for _, url := range URLs {
-		normUrl, err := normalizeURL(url)
+	for _, URL := range URLs {
+		normUrl, err := normalizeURL(URL)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		_, ok := pages[normUrl]
+		cfg.mu.Lock()
+		_, ok := cfg.pages[normUrl]
+		cfg.mu.Unlock()
+
 		if !ok {
-			pages[normUrl] = 0
-			crawlPage(rawBaseURL, url, pages)
+			cfg.mu.Lock()
+			cfg.pages[normUrl] = 0
+			cfg.mu.Unlock()
+
+			cfg.wg.Add(1)
+			cfg.concurrencyControl <- struct{}{}
+			go cfg.crawlPage("https://" + URL)
+			<-cfg.concurrencyControl
+
 		}
 	}
+}
+
+func (cfg *config) addPageVisit(normalizedURL string) (isFirst bool) {
+	cfg.mu.Lock()
+	if cfg.pages[normalizedURL] == 1 {
+		cfg.mu.Unlock()
+		return false
+	}
+
+	// mark that we have visited the current page in pages map
+	fmt.Printf("Visited %s\n", normalizedURL)
+	cfg.pages[normalizedURL] = 1
+	cfg.mu.Unlock()
+	return true
 }
