@@ -38,9 +38,7 @@ func main() {
 		<-cfg.concurrencyControl
 		cfg.wg.Wait()
 
-		// for k, v := range pages {
-		// 	fmt.Printf("Key: %s Val: %v\n", k, v)
-		// }
+		fmt.Printf("number of entries to pages map: %v\n", len(cfg.pages))
 		fmt.Println("Ending Crawl")
 	}
 }
